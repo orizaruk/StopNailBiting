@@ -3,6 +3,8 @@ from shapely import Point, Polygon
 from pprint import pp
 
 IMAGE_PATH = "assets/img7.jpg"
+# Load the image, need to modify for live stream in the future
+mp_image = mp.Image.create_from_file(IMAGE_PATH)
 
 hand_model_path = "models/hand_landmarker.task"
 face_model_path = "models/face_landmarker.task"
@@ -29,8 +31,6 @@ face_options = FaceLandmarkerOptions(
     running_mode=VisionRunningMode.IMAGE,
 )
 
-# Load the image, need to modify for live stream in the future
-mp_image = mp.Image.create_from_file(IMAGE_PATH)
 
 # LIST OF THE RELEVANT LANDMARK INDICES
 LIP_INDICES = [
@@ -57,6 +57,7 @@ LIP_INDICES = [
     308,
 ]
 HAND_INDICES = [4, 3, 8, 7, 12, 11, 16, 15, 20, 19]
+
 
 with HandLandmarker.create_from_options(
     hand_options
@@ -94,4 +95,10 @@ with HandLandmarker.create_from_options(
                     point = Point(landmark_info.x, landmark_info.y)
                     # CHECK IF THE POINT IS WITHIN THE POLYGON, IF IT IS - NAIL BITING!
                     if buffered_polygon.contains(point):
-                        print("BITING DETECTED!")
+                        print(f"BITING DETECTED AT IMAGE {image_num}!")
+
+
+print(
+    x,
+    " ",
+)
