@@ -2,7 +2,7 @@ import mediapipe as mp
 from shapely import Point, Polygon
 from pprint import pp
 
-IMAGE_PATH = "assets/img7.jpg"
+IMAGE_PATH = "assets/img1.jpg"
 # Load the image, need to modify for live stream in the future
 mp_image = mp.Image.create_from_file(IMAGE_PATH)
 
@@ -95,10 +95,4 @@ with HandLandmarker.create_from_options(
                     point = Point(landmark_info.x, landmark_info.y)
                     # CHECK IF THE POINT IS WITHIN THE POLYGON, IF IT IS - NAIL BITING!
                     if buffered_polygon.contains(point):
-                        print(f"BITING DETECTED AT IMAGE {image_num}!")
-
-
-print(
-    x,
-    " ",
-)
+                        print(f"BITING DETECTED!")
