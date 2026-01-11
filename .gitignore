@@ -1,2 +1,18 @@
+# Virtual environment
 venv/
+.venv/
+
+# Assets (test images, sounds)
 assets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Windows artifacts
+*:Zone.Identifier
+
+# IDE
+.vscode/
+.idea/
