@@ -6,7 +6,8 @@ Your guardian against nail-biting. This is a lightweight app that uses Google's 
 
 The app runs silently in your system tray, monitoring your webcam. When it detects nail biting, it triggers an irritating alert to make you stop.
 
-By default, the alert is a flashing red screen and a BEEP noise but you can choose to disable either or both. LEAVING BOTH ON IS HIGHLY RECOMMENDED! :)
+By default, the alert is a flashing red screen and a BEEP noise but you can choose to disable either or both. 
+LEAVING BOTH ON IS HIGHLY RECOMMENDED! :)
 
 **Detection pipeline:**
 1. Detects hands in the webcam frame using MediaPipe
