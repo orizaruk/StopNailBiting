@@ -3,3 +3,6 @@ opencv-python
 shapely
 pygame
 numpy
+pyinstaller
+pystray
+Pillow
