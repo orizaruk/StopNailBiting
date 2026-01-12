@@ -21,7 +21,7 @@ dist/
 *.egg
 .eggs/
 *.manifest
-*.spec
+# *.spec  # Keep stopnailbiting.spec for PyInstaller builds
 
 # Environment variables
 .env

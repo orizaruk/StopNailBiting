@@ -2,6 +2,8 @@
 
 Your guardian against nail-biting. This is a lightweight app that uses Google's MediaPipe models to spot nail-biting in real-time and make you STOP. It runs silently in the background, keeping you accountable at all times.
 
+![Demo](media/demo.gif)
+
 ## How It Works
 
 The app runs silently in your system tray, monitoring your webcam. When it detects nail biting, it triggers an irritating alert to make you stop.
@@ -83,6 +85,8 @@ pyinstaller stopnailbiting.spec
 ### System Tray Menu
 
 Right-click the tray icon to access settings:
+
+![Tray Menu](media/tray-menu.png)
 
 | Option | Description |
 |--------|-------------|
