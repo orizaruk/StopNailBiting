@@ -21,7 +21,7 @@
 
 1. **Download** `StopNailBiting.exe` from [Releases](../../releases)
 2. **Run** the executable
-3. **Done** — look for the red icon in your system tray
+3. **Done** - look for the red icon in your system tray :)
 
 ---
 
