@@ -1,15 +1,35 @@
-# Stop Nail Biting
+<h1 align="center">🛑 Stop Nail Biting</h1>
 
-Your guardian against nail-biting. This is a lightweight app that uses Google's MediaPipe models to spot nail-biting in real-time and make you STOP. It runs silently in the background, keeping you accountable at all times.
+<p align="center">
+  <strong>Your guardian against nail-biting.</strong><br>
+  A lightweight app that uses Google's MediaPipe to spot nail-biting in real-time and make you STOP.
+</p>
 
-![Demo](media/demo.gif)
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/version-1.0.0-green?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/github/license/orizaruk/stopnailbiting?style=flat-square" alt="License">
+</p>
 
-## How It Works
+<p align="center">
+  <img src="media/demo.gif" alt="Demo">
+</p>
+
+---
+
+## 🚀 Quick Start
+
+1. **Download** `StopNailBiting.exe` from [Releases](../../releases)
+2. **Run** the executable
+3. **Done** — look for the red icon in your system tray
+
+---
+
+## 🔍 How It Works
 
 The app runs silently in your system tray, monitoring your webcam. When it detects nail biting, it triggers an irritating alert to make you stop.
 
-By default, the alert is a flashing red screen and a BEEP noise but you can choose to disable either or both. 
-LEAVING BOTH ON IS HIGHLY RECOMMENDED! :)
+By default, the alert is a flashing red screen and a BEEP noise but you can choose to disable either or both. LEAVING BOTH ON IS HIGHLY RECOMMENDED! :)
 
 **Detection pipeline:**
 1. Detects hands in the webcam frame using MediaPipe
@@ -18,24 +38,28 @@ LEAVING BOTH ON IS HIGHLY RECOMMENDED! :)
 4. Filters out false positives with temporal consistency (multiple frames required)
 5. Triggers alert (sound + visual flash)
 
-## Features
+---
 
-- **Real-time Detection** - Uses MediaPipe hand and face tracking (thanks Google!)
-- **Dual Alert System** - Fullscreen red flash + audio alert (both configurable, designed to be annoying and effective)
-- **System Tray Integration** - Runs quietly in background
-- **Persistent Settings** - Preferences saved between sessions
-- **Volume Control** - Adjustable alert volume (25%, 50%, 75%, 100%)
-- **Auto-Start** - Optional launch on Windows startup
-- **Pause/Resume** - Temporarily disable without closing
-- **Low Resource Usage** - Optimized to ~15 FPS with smart detection skipping
+## ✨ Features
 
-## Installation
+- **Real-time Detection** — Uses MediaPipe hand and face tracking (thanks Google!)
+- **Dual Alert System** — Fullscreen red flash + audio alert (both configurable, designed to be annoying and effective)
+- **System Tray Integration** — Runs quietly in background
+- **Persistent Settings** — Preferences saved between sessions
+- **Volume Control** — Adjustable alert volume (25%, 50%, 75%, 100%)
+- **Auto-Start** — Optional launch on Windows startup
+- **Pause/Resume** — Temporarily disable without closing
+- **Low Resource Usage** — Optimized to ~15 FPS with smart detection skipping
+
+---
+
+## 📥 Installation
 
 ### Option 1: Download Executable (Recommended)
 
 1. Go to [Releases](../../releases)
 2. Download `StopNailBiting.exe`
-3. Run the executable - no installation required
+3. Run the executable — no installation required
 
 ### Option 2: Run from Source
 
@@ -74,19 +98,23 @@ pyinstaller stopnailbiting.spec
 # Output: dist/StopNailBiting.exe
 ```
 
-## Usage
+---
 
-1. **Launch the app** - A red circle icon appears in your system tray
-2. **Position your webcam** - Ensure your face and hands are visible
-3. **Work normally** - The app monitors in the background
-4. **Get alerted** - When nail-biting is detected, you'll see/hear an alert
-5. **Auto-start** - Make sure to mark "Start with Windows" if you want it to launch automatically on startup (RECOMMENDED!)
+## 🎯 Usage
+
+1. **Launch the app** — A red circle icon appears in your system tray
+2. **Position your webcam** — Ensure your face and hands are visible
+3. **Work normally** — The app monitors in the background
+4. **Get alerted** — When nail-biting is detected, you'll see/hear an alert
+5. **Auto-start** — Make sure to mark "Start with Windows" if you want it to launch automatically on startup (RECOMMENDED!)
 
 ### System Tray Menu
 
 Right-click the tray icon to access settings:
 
-![Tray Menu](media/tray-menu.png)
+<p align="center">
+  <img src="media/tray-menu.png" alt="Tray Menu">
+</p>
 
 | Option | Description |
 |--------|-------------|
@@ -101,10 +129,12 @@ Right-click the tray icon to access settings:
 
 | Icon | Status |
 |------|--------|
-| Red circle | Actively monitoring |
-| Gray circle | Paused |
+| 🔴 Red circle | Actively monitoring |
+| ⚫ Gray circle | Paused |
 
-## Configuration
+---
+
+## ⚙️ Configuration
 
 Settings are automatically saved to:
 - **Windows**: `%APPDATA%\StopNailBiting\config.json`
@@ -118,15 +148,17 @@ Settings are automatically saved to:
 }
 ```
 
-## Technical Details
+---
+
+## 🔧 Technical Details
 
 ### Dependencies
 
-- [MediaPipe](https://mediapipe.dev/) - Hand and face landmark detection
-- [OpenCV](https://opencv.org/) - Webcam capture and image processing
-- [Shapely](https://shapely.readthedocs.io/) - Geometric polygon operations
-- [Pygame](https://www.pygame.org/) - Audio playback
-- [pystray](https://github.com/moses-palmer/pystray) - System tray integration
+- [MediaPipe](https://mediapipe.dev/) — Hand and face landmark detection
+- [OpenCV](https://opencv.org/) — Webcam capture and image processing
+- [Shapely](https://shapely.readthedocs.io/) — Geometric polygon operations
+- [Pygame](https://www.pygame.org/) — Audio playback
+- [pystray](https://github.com/moses-palmer/pystray) — System tray integration
 
 ### Detection Parameters
 
@@ -140,20 +172,26 @@ TARGET_FPS = 15           # Frame rate cap
 COOLDOWN_PERIOD = 1.5     # Seconds alert stays after detection stops
 ```
 
-Feel free to experiment with the values and see if they yield better results for you, the default settings should work well enough. 
+Feel free to experiment with the values and see if they yield better results for you, the default settings should work well enough.
 
-## Limitations
+---
+
+## ⚠️ Limitations
 
 - Windows only
 - False positives are possible if hands are near mouth
 - First launch may be slow (~5-10s) as files are extracted
 
-## Privacy
+---
 
-- **All processing is local** - No data leaves your computer
-- **No recording** - Webcam frames are processed in memory and immediately discarded
-- **No network access** - The app works entirely offline
+## 🔒 Privacy
 
-## Contributing
+- **All processing is local** — No data leaves your computer
+- **No recording** — Webcam frames are processed in memory and immediately discarded
+- **No network access** — The app works entirely offline
+
+---
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
