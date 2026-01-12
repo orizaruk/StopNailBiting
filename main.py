@@ -4,8 +4,6 @@ from shapely import Point, Polygon
 import pygame
 import tkinter as tk
 import time
-import signal
-import sys
 import os
 
 # Configuration
@@ -14,6 +12,9 @@ Z_DEPTH_THRESHOLD = 0.1  # Max z-difference between finger and lips for valid de
 FRAMES_REQUIRED = 3  # Consecutive frames needed before triggering alert
 TARGET_FPS = 15  # Target frame rate to reduce CPU usage
 COOLDOWN_PERIOD = 1.5  # Time in seconds to keep alert visible after biting stops
+SOUND_FILE = (
+    "assets/noise.wav"  # Path to alert sound (.mp3, .wav, .ogg) or None to disable
+)
 
 hand_model_path = "models/hand_landmarker.task"
 face_model_path = "models/face_landmarker.task"
@@ -30,13 +31,13 @@ FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
 
 # Create a hand landmarker instance with video mode for temporal smoothing:
 hand_options = HandLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path="models/hand_landmarker.task"),
+    base_options=BaseOptions(model_asset_path=hand_model_path),
     running_mode=VisionRunningMode.VIDEO,
     num_hands=2,
 )
 
 face_options = FaceLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path="models/face_landmarker.task"),
+    base_options=BaseOptions(model_asset_path=face_model_path),
     running_mode=VisionRunningMode.VIDEO,
 )
 
@@ -125,28 +126,46 @@ class RedFlashAlert:
 
 
 class SoundManager:
-    """Manages sound alerts with anti-flicker protection"""
+    """Manages sound alerts with anti-flicker protection and graceful degradation"""
 
     def __init__(self, sound_file):
-        if not os.path.exists(sound_file):
-            raise FileNotFoundError(
-                f"Sound file not found: {sound_file}\n"
-                f"Please place an alert sound at: {os.path.abspath(sound_file)}"
-            )
-        pygame.mixer.init()
-        self.alert_sound = pygame.mixer.Sound(sound_file)
+        self.enabled = False
         self.sound_playing = False
+        self.alert_sound = None
+
+        if sound_file is None:
+            print("[Info] Sound disabled by configuration")
+            return
+
+        try:
+            if not os.path.exists(sound_file):
+                print(f"[Warning] Sound file not found: {sound_file}")
+                print(f"          Expected location: {os.path.abspath(sound_file)}")
+                print("          Running in visual-only mode (no audio alerts)")
+                return
+
+            pygame.mixer.init()
+            self.alert_sound = pygame.mixer.Sound(sound_file)
+            self.enabled = True
+            print(f"[Info] Sound loaded successfully: {sound_file}")
+
+        except pygame.error as e:
+            print(f"[Warning] Failed to initialize audio: {e}")
+            print("          Running in visual-only mode (no audio alerts)")
+        except Exception as e:
+            print(f"[Warning] Unexpected error loading sound: {e}")
+            print("          Running in visual-only mode (no audio alerts)")
 
     def start_sound(self):
         """Start the alert sound if not already playing"""
-        if not self.sound_playing:
+        if self.enabled and not self.sound_playing:
             self.alert_sound.play(loops=-1)
             self.sound_playing = True
             print("Alert sound started")
 
     def stop_sound(self):
         """Stop the alert sound"""
-        if self.sound_playing:
+        if self.enabled and self.sound_playing:
             self.alert_sound.stop()
             self.sound_playing = False
             print("Alert sound stopped")
@@ -154,7 +173,8 @@ class SoundManager:
     def cleanup(self):
         """Release pygame mixer resources"""
         self.stop_sound()
-        pygame.mixer.quit()
+        if self.enabled:
+            pygame.mixer.quit()
 
 
 # Initialize the webcam
@@ -163,7 +183,7 @@ if not cap.isOpened():
     raise IOError("Cannot open webcam")
 
 # Initialize sound and alert managers
-sound_manager = SoundManager("assets/noise.mp3")
+sound_manager = SoundManager(SOUND_FILE)
 red_flash = RedFlashAlert()
 
 alert_active = False
@@ -179,14 +199,6 @@ def cleanup():
     red_flash.cleanup()
     print("Shutdown complete.")
 
-
-def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
-    cleanup()
-    sys.exit(0)
-
-
-signal.signal(signal.SIGINT, signal_handler)
 
 try:
     with HandLandmarker.create_from_options(
@@ -229,14 +241,18 @@ try:
                     lip_points_coords_list = []
                     for index in LIP_INDICES:
                         landmark_info = face_landmarks_array[index]
-                        lip_points_coords_list.append((landmark_info.x, landmark_info.y))
+                        lip_points_coords_list.append(
+                            (landmark_info.x, landmark_info.y)
+                        )
 
                     # Create polygon
                     precise_polygon = Polygon(lip_points_coords_list)
                     buffered_polygon = precise_polygon.buffer(SENSITIVITY)
 
                     # Calculate average lip z-depth for comparison
-                    lip_avg_z = sum(face_landmarks_array[i].z for i in LIP_INDICES) / len(LIP_INDICES)
+                    lip_avg_z = sum(
+                        face_landmarks_array[i].z for i in LIP_INDICES
+                    ) / len(LIP_INDICES)
 
                     # Check if hand landmarks intersect with mouth polygon
                     for hand in hand_result.hand_landmarks:
@@ -280,5 +296,7 @@ try:
             # Limit frame rate to reduce CPU usage
             time.sleep(1 / TARGET_FPS)
 
+except KeyboardInterrupt:
+    pass  # Normal exit via Ctrl+C
 finally:
     cleanup()
