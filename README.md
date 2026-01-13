@@ -1,7 +1,6 @@
 <h1 align="center">🛑 Stop Nail Biting</h1>
 
 <p align="center">
-  <strong>Your guardian against nail-biting.</strong><br>
   A lightweight app that uses Google's MediaPipe to spot nail-biting in real-time and make you STOP.
 </p>
 
