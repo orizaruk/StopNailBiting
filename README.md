@@ -99,7 +99,7 @@ pyinstaller stopnailbiting.spec
 
 ---
 
-## 🎯 Usage
+## Usage
 
 1. **Launch the app** — A red circle icon appears in your system tray
 2. **Position your webcam** — Ensure your face and hands are visible
@@ -133,7 +133,7 @@ Right-click the tray icon to access settings:
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Settings are automatically saved to:
 - **Windows**: `%APPDATA%\StopNailBiting\config.json`
@@ -149,7 +149,7 @@ Settings are automatically saved to:
 
 ---
 
-## 🔧 Technical Details
+## Technical Details
 
 ### Dependencies
 
