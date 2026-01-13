@@ -25,7 +25,7 @@
 
 ---
 
-## 🔍 How It Works
+## How It Works
 
 The app runs silently in your system tray, monitoring your webcam. When it detects nail biting, it triggers an irritating alert to make you stop.
 
@@ -40,7 +40,7 @@ By default, the alert is a flashing red screen and a BEEP noise but you can choo
 
 ---
 
-## ✨ Features
+## Features
 
 - **Real-time Detection** — Uses MediaPipe hand and face tracking (thanks Google!)
 - **Dual Alert System** — Fullscreen red flash + audio alert (both configurable, designed to be annoying and effective)
@@ -53,7 +53,7 @@ By default, the alert is a flashing red screen and a BEEP noise but you can choo
 
 ---
 
-## 📥 Installation
+## Installation
 
 ### Option 1: Download Executable (Recommended)
 
@@ -176,7 +176,7 @@ Feel free to experiment with the values and see if they yield better results for
 
 ---
 
-## ⚠️ Limitations
+## Limitations
 
 - Windows only
 - False positives are possible if hands are near mouth
@@ -184,7 +184,7 @@ Feel free to experiment with the values and see if they yield better results for
 
 ---
 
-## 🔒 Privacy
+## Privacy
 
 - **All processing is local** — No data leaves your computer
 - **No recording** — Webcam frames are processed in memory and immediately discarded
@@ -192,6 +192,6 @@ Feel free to experiment with the values and see if they yield better results for
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
