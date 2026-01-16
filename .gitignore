@@ -48,3 +48,7 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# AI 
+CLAUDE.md
+AGENTS.md

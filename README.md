@@ -178,6 +178,7 @@ Feel free to experiment with the values and see if they yield better results for
 ## Limitations
 
 - Windows only
+- Does not work simultaneously with video conferencing apps (Zoom, Google Meet, etc.) as they lock the webcam
 - False positives are possible if hands are near mouth
 - First launch may be slow (~5-10s) as files are extracted
 
