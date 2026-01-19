@@ -11,6 +11,7 @@ import json
 import subprocess
 from PIL import Image, ImageDraw
 import pystray
+from screeninfo import get_monitors
 
 
 class ConfigManager:
@@ -144,60 +145,84 @@ HAND_INDICES = [4, 3, 8, 7, 12, 11, 16, 15, 20, 19]
 
 
 class RedFlashAlert:
-    """Simple red screen flash for nail biting alerts"""
+    """Multi-monitor red screen flash for nail biting alerts"""
 
     def __init__(self):
-        self.root = None
+        self.windows = []  # List of windows, one per monitor
         self.is_showing = False
-        self._init_window()
+        self._init_windows()
 
-    def _init_window(self):
-        self.root = tk.Tk()
-        self.root.attributes("-fullscreen", True)
-        self.root.attributes("-topmost", True)
-        self.root.configure(background="red")
-        self.root.overrideredirect(True)
+    def _init_windows(self):
+        """Create a fullscreen window for each monitor"""
+        monitors = get_monitors()
+        print(f"[RedFlash] Detected {len(monitors)} monitor(s)")
 
-        label = tk.Label(
-            self.root,
-            text="⚠️ STOP NAIL BITING ⚠️",
-            font=("Arial", 48, "bold"),
-            bg="red",
-            fg="white",
-        )
-        label.pack(expand=True)
+        for i, monitor in enumerate(monitors):
+            # First window is Tk root, subsequent are Toplevel
+            if not self.windows:
+                window = tk.Tk()
+            else:
+                window = tk.Toplevel(self.windows[0])
 
-        # Start hidden
-        self.root.withdraw()
-        self.root.update()
+            window.title("Alert")
+            window.configure(background="red")
+            window.overrideredirect(True)
+            window.attributes("-topmost", True)
+
+            # Position and size to cover this monitor exactly
+            window.geometry(f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}")
+            print(f"[RedFlash] Monitor {i+1}: {monitor.width}x{monitor.height} at ({monitor.x}, {monitor.y})")
+
+            # Add warning label
+            label = tk.Label(
+                window,
+                text="⚠️ STOP NAIL BITING ⚠️",
+                font=("Arial", 48, "bold"),
+                fg="white",
+                bg="red",
+            )
+            label.place(relx=0.5, rely=0.5, anchor="center")
+
+            window.withdraw()
+            self.windows.append(window)
+
+        # Process events
+        if self.windows:
+            self.windows[0].update()
 
     def flash(self):
-        """Show red overlay"""
+        """Show alert on all monitors"""
         if not self.is_showing:
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes("-topmost", True)
+            for window in self.windows:
+                window.deiconify()
+                window.lift()
+                window.attributes("-topmost", True)
             self.is_showing = True
             print("Red flash activated")
 
     def update(self):
-        """Call this in your main loop to update the window"""
-        try:
-            self.root.update()
-        except Exception as e:
-            print(f"Update error: {e}")
+        """Process tkinter events"""
+        if self.windows:
+            try:
+                self.windows[0].update()
+            except Exception as e:
+                print(f"Update error: {e}")
 
     def hide(self):
-        """Manually hide the overlay"""
+        """Hide alert on all monitors"""
         if self.is_showing:
-            self.root.withdraw()
-            self.root.update()
+            for window in self.windows:
+                window.withdraw()
+            if self.windows:
+                self.windows[0].update()
             self.is_showing = False
             print("Red flash deactivated")
 
     def cleanup(self):
-        """Destroy the tkinter window"""
-        self.root.destroy()
+        """Destroy all windows"""
+        for window in self.windows:
+            window.destroy()
+        self.windows = []
 
 
 class SoundManager:

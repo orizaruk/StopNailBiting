@@ -35,6 +35,7 @@ a = Analysis(
         'shapely.geometry',
         'pygame',
         'numpy',
+        'screeninfo',
     ],
     hookspath=[],
     hooksconfig={},
