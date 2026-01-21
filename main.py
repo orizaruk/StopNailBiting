@@ -85,15 +85,30 @@ def resource_path(relative_path):
     # Running in development
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
+
+def find_sound_file(base_name="noise"):
+    """Find a sound file with supported extension in assets folder.
+
+    Searches for base_name with .mp3, .wav, .ogg extensions.
+    Returns the path if found, None otherwise.
+    """
+    assets_dir = resource_path("assets")
+    supported_extensions = [".mp3", ".wav", ".ogg"]
+
+    for ext in supported_extensions:
+        path = os.path.join(assets_dir, base_name + ext)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 # Configuration
 SENSITIVITY = 0.01  # Lip polygon buffer size
 Z_DEPTH_THRESHOLD = 0.1  # Max z-difference between finger and lips for valid detection
 FRAMES_REQUIRED = 3  # Consecutive frames needed before triggering alert
 TARGET_FPS = 15  # Target frame rate to reduce CPU usage
 COOLDOWN_PERIOD = 1.5  # Time in seconds to keep alert visible after biting stops
-SOUND_FILE = resource_path(
-    os.path.join("assets", "noise.mp3")
-)  # Path to alert sound (.mp3, .wav, .ogg) or None to disable
+SOUND_FILE = find_sound_file("noise")  # Auto-detects .mp3, .wav, or .ogg in assets/
 
 hand_model_path = resource_path(os.path.join("models", "hand_landmarker.task"))
 face_model_path = resource_path(os.path.join("models", "face_landmarker.task"))

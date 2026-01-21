@@ -147,6 +147,15 @@ Settings are automatically saved to:
 }
 ```
 
+### Custom Sound
+
+To use a custom alert sound, place a file named `noise` with one of the supported extensions in the `assets/` folder:
+- `noise.mp3`
+- `noise.wav`
+- `noise.ogg`
+
+The app auto-detects whichever format is present. If no sound file is found, audio alerts are disabled.
+
 ---
 
 ## Technical Details
