@@ -1,3 +1,18 @@
+"""
+Stop Nail Biting - Real-time nail biting detection and alert system.
+
+This application uses computer vision (MediaPipe) to detect when fingers are near
+the mouth, indicating potential nail-biting behavior. When detected, it triggers
+visual (red screen flash) and audio alerts to help break the habit.
+
+The app runs silently in the system tray and supports:
+- Multi-monitor visual alerts
+- Configurable audio alerts with volume control
+- Drinking detection to reduce false positives (cups, bottles, glasses)
+- Persistent settings saved to user config directory
+- Windows startup integration
+"""
+
 import cv2
 import mediapipe as mp
 from shapely import Point, Polygon
@@ -28,6 +43,11 @@ class ConfigManager:
     }
 
     def __init__(self):
+        """Initialize config manager and load settings from disk.
+
+        Loads existing config from %APPDATA%/StopNailBiting/config.json on Windows,
+        or creates a new config file with defaults if none exists.
+        """
         self.config = self.DEFAULT_CONFIG.copy()
         self.config_dir = self._get_config_dir()
         self.config_file = os.path.join(self.config_dir, "config.json")
@@ -152,7 +172,8 @@ object_options = ObjectDetectorOptions(
     score_threshold=DRINKING_CONFIDENCE_THRESHOLD,
 )
 
-# LIST OF THE RELEVANT LANDMARK INDICES
+# MediaPipe FaceLandmarker indices that form the outer lip contour polygon.
+# These 21 points trace around the lips to create a closed shape for collision detection.
 LIP_INDICES = [
     308,
     324,
@@ -176,14 +197,22 @@ LIP_INDICES = [
     415,
     308,
 ]
+
+# MediaPipe HandLandmarker indices for fingertips and finger joints to check.
+# Pairs: (tip, joint below) for thumb(4,3), index(8,7), middle(12,11), ring(16,15), pinky(20,19)
 HAND_INDICES = [4, 3, 8, 7, 12, 11, 16, 15, 20, 19]
 
 
 class RedFlashAlert:
-    """Multi-monitor red screen flash for nail biting alerts"""
+    """Multi-monitor red screen flash for nail biting alerts."""
 
     def __init__(self):
-        self.windows = []  # List of windows, one per monitor
+        """Initialize alert windows for all connected monitors.
+
+        Creates a hidden fullscreen red Tkinter window for each detected monitor.
+        The first window is the Tk root; subsequent windows are Toplevel children.
+        """
+        self.windows = []
         self.is_showing = False
         self._init_windows()
 
@@ -261,9 +290,16 @@ class RedFlashAlert:
 
 
 class SoundManager:
-    """Manages sound alerts with anti-flicker protection and graceful degradation"""
+    """Manages sound alerts with anti-flicker protection and graceful degradation."""
 
     def __init__(self, sound_file, volume=0.75):
+        """Initialize sound manager with optional audio file.
+
+        Args:
+            sound_file: Path to the alert sound file (.mp3, .wav, or .ogg).
+                       If None or file doesn't exist, runs in visual-only mode.
+            volume: Initial volume level from 0.0 (silent) to 1.0 (full).
+        """
         self.enabled = False
         self.sound_playing = False
         self.alert_sound = None
@@ -322,20 +358,37 @@ class SoundManager:
 
 
 class AppController:
-    """Controls app state and system tray integration"""
+    """Controls app state and system tray integration.
+
+    Manages the pystray system tray icon, menu actions, and shared state
+    (running/paused) that coordinates between the main detection loop
+    and the tray UI thread.
+    """
 
     def __init__(self, config, sound_manager):
+        """Initialize app controller with config and sound manager.
+
+        Args:
+            config: ConfigManager instance for persisting settings.
+            sound_manager: SoundManager instance for volume control integration.
+        """
         self.config = config
         self.sound_manager = sound_manager
         self.running = True
         self.paused = False
         self.icon = None
-        # Pre-create both icon images
         self.icon_active = self._create_icon_image(active=True)
         self.icon_paused = self._create_icon_image(active=False)
 
     def _create_icon_image(self, active=True):
-        """Create icon image - red when active, gray when paused"""
+        """Create a 64x64 tray icon image.
+
+        Args:
+            active: If True, creates a red icon (monitoring). If False, gray (paused).
+
+        Returns:
+            PIL.Image.Image: RGBA image suitable for pystray icon.
+        """
         size = 64
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
@@ -505,9 +558,16 @@ $Shortcut.Save()
             print(f"[Startup] Failed to remove shortcut: {e}")
             return False
 
-    # Volume control methods
     def _volume_menu_item(self, label, level):
-        """Create a volume menu item with proper checked state and action"""
+        """Create a volume menu item with radio-button behavior.
+
+        Args:
+            label: Display text for the menu item (e.g., "75%").
+            level: Volume level from 0.0 to 1.0.
+
+        Returns:
+            pystray.MenuItem: Menu item that shows checked state and updates volume.
+        """
         def is_checked(item):
             return abs(self.config.get("volume") - level) < 0.01
 
@@ -518,7 +578,11 @@ $Shortcut.Save()
         return pystray.MenuItem(label, set_level, checked=is_checked)
 
     def setup_tray(self):
-        """Create and return the system tray icon"""
+        """Create and configure the system tray icon with menu.
+
+        Returns:
+            pystray.Icon: Configured tray icon ready to run.
+        """
         # Volume submenu
         volume_menu = pystray.Menu(
             self._volume_menu_item("25%", 0.25),
@@ -595,7 +659,11 @@ drinking_persistence_counter = 0
 
 
 def cleanup():
-    """Clean up all resources"""
+    """Release all resources on application exit.
+
+    Releases webcam, stops audio, destroys alert windows, and stops tray icon.
+    Called from the finally block to ensure cleanup on normal exit or exception.
+    """
     print("\nCleaning up...")
     cap.release()
     sound_manager.cleanup()
@@ -730,13 +798,15 @@ try:
 
             current_time = time.time()
 
-            # Update consecutive detection counter
+            # Temporal smoothing: require multiple consecutive positive frames
+            # to reduce false positives from brief hand movements near face
             if biting_detected:
                 consecutive_detections += 1
             else:
                 consecutive_detections = 0
 
-            # Handle biting detection with temporal consistency and cooldown
+            # Alert state machine: activate after FRAMES_REQUIRED consecutive detections,
+            # then maintain alert until COOLDOWN_PERIOD after detection stops
             if consecutive_detections >= FRAMES_REQUIRED:
                 # Sustained detection confirmed - update timestamp and activate alert
                 last_biting_time = current_time
