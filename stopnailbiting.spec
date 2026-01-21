@@ -23,6 +23,7 @@ a = Analysis(
         # Bundle the MediaPipe model files
         ('models/hand_landmarker.task', 'models'),
         ('models/face_landmarker.task', 'models'),
+        ('models/efficientdet_lite0.tflite', 'models'),
         # Bundle the sound file
         ('assets/noise.wav', 'assets'),
     ] + mediapipe_datas,

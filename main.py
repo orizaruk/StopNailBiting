@@ -1,6 +1,8 @@
 import cv2
 import mediapipe as mp
 from shapely import Point, Polygon
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 import pygame
 import tkinter as tk
 import time
@@ -22,6 +24,7 @@ class ConfigManager:
         "sound_enabled": True,
         "start_with_windows": False,
         "volume": 0.75,
+        "drinking_detection_enabled": True,
     }
 
     def __init__(self):
@@ -89,11 +92,18 @@ FRAMES_REQUIRED = 3  # Consecutive frames needed before triggering alert
 TARGET_FPS = 15  # Target frame rate to reduce CPU usage
 COOLDOWN_PERIOD = 1.5  # Time in seconds to keep alert visible after biting stops
 SOUND_FILE = resource_path(
-    "assets/noise.wav"
+    os.path.join("assets", "noise.mp3")
 )  # Path to alert sound (.mp3, .wav, .ogg) or None to disable
 
-hand_model_path = resource_path("models/hand_landmarker.task")
-face_model_path = resource_path("models/face_landmarker.task")
+hand_model_path = resource_path(os.path.join("models", "hand_landmarker.task"))
+face_model_path = resource_path(os.path.join("models", "face_landmarker.task"))
+object_model_path = resource_path(os.path.join("models", "efficientdet_lite0.tflite"))
+
+# Drinking detection constants (to reduce false positives when drinking)
+DRINKING_DETECTION_INTERVAL = 3  # Run object detection every N frames
+DRINKING_CONFIDENCE_THRESHOLD = 0.35  # Minimum confidence for drinking detection
+DRINKING_PERSISTENCE_FRAMES = 30  # Frames to persist drinking detection state (~2 seconds at 15 FPS)
+DRINKING_CLASS_LABELS = {"cup", "bottle", "wine glass"}
 
 # Initializations of options to configure the model
 BaseOptions = mp.tasks.BaseOptions
@@ -105,6 +115,9 @@ HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
 
+ObjectDetector = mp.tasks.vision.ObjectDetector
+ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
+
 # Create a hand landmarker instance with video mode for temporal smoothing:
 hand_options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=hand_model_path),
@@ -115,6 +128,13 @@ hand_options = HandLandmarkerOptions(
 face_options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=face_model_path),
     running_mode=VisionRunningMode.VIDEO,
+)
+
+object_options = ObjectDetectorOptions(
+    base_options=BaseOptions(model_asset_path=object_model_path),
+    running_mode=VisionRunningMode.VIDEO,
+    max_results=5,
+    score_threshold=DRINKING_CONFIDENCE_THRESHOLD,
 )
 
 # LIST OF THE RELEVANT LANDMARK INDICES
@@ -367,6 +387,16 @@ class AppController:
         self.config.set("sound_enabled", new_value)
         print(f"[Tray] Sound {'enabled' if new_value else 'disabled'}")
 
+    def is_drinking_detection_enabled(self, item):
+        """Check if drinking detection is enabled (for checkbox state)"""
+        return self.config.get("drinking_detection_enabled")
+
+    def toggle_drinking_detection(self, icon, item):
+        """Toggle drinking detection enabled state"""
+        new_value = not self.config.get("drinking_detection_enabled")
+        self.config.set("drinking_detection_enabled", new_value)
+        print(f"[Tray] Drinking detection {'enabled' if new_value else 'disabled'}")
+
     def is_start_with_windows(self, item):
         """Check if start with Windows is enabled (for checkbox state)"""
         return self.config.get("start_with_windows")
@@ -495,6 +525,11 @@ $Shortcut.Save()
             ),
             pystray.MenuItem("Volume", volume_menu),
             pystray.MenuItem(
+                "Drinking Detection (Cups/Bottles)",
+                self.toggle_drinking_detection,
+                checked=self.is_drinking_detection_enabled,
+            ),
+            pystray.MenuItem(
                 "Start with Windows",
                 self.toggle_start_with_windows,
                 checked=self.is_start_with_windows,
@@ -538,6 +573,11 @@ alert_active = False
 last_biting_time = 0  # Track when biting was last detected
 consecutive_detections = 0  # Track consecutive frames with detection
 
+# Drinking detection state
+drinking_frame_counter = 0
+drinking_detected = False
+drinking_persistence_counter = 0
+
 
 def cleanup():
     """Clean up all resources"""
@@ -560,7 +600,9 @@ try:
         hand_options
     ) as hand_landmarker, FaceLandmarker.create_from_options(
         face_options
-    ) as face_landmarker:
+    ) as face_landmarker, ObjectDetector.create_from_options(
+        object_options
+    ) as object_detector:
 
         biting_detected = False
 
@@ -620,19 +662,56 @@ try:
                         face_landmarks_array[i].z for i in LIP_INDICES
                     ) / len(LIP_INDICES)
 
-                    # Check if hand landmarks intersect with mouth polygon
-                    for hand in hand_result.hand_landmarks:
-                        for hand_landmark_index in HAND_INDICES:
-                            landmark_info = hand[hand_landmark_index]
-                            point = Point(landmark_info.x, landmark_info.y)
-                            if buffered_polygon.contains(point):
-                                # Z-depth check: finger must be at similar depth to lips
-                                # This filters out fingers passing in front of the face
-                                if abs(landmark_info.z - lip_avg_z) < Z_DEPTH_THRESHOLD:
-                                    biting_detected = True
+                    # Drinking detection (run every N frames to save resources)
+                    if config_manager.get("drinking_detection_enabled"):
+                        drinking_frame_counter += 1
+
+                        if drinking_frame_counter >= DRINKING_DETECTION_INTERVAL:
+                            drinking_frame_counter = 0
+
+                            # Run object detection
+                            object_result = object_detector.detect_for_video(mp_image, timestamp_ms)
+
+                            # Check if any drinking object is detected
+                            drinking_this_frame = False
+                            for detection in object_result.detections:
+                                category_name = detection.categories[0].category_name
+                                if category_name in DRINKING_CLASS_LABELS:
+                                    drinking_this_frame = True
+                                    print(f"[Drinking] {category_name} detected - suppressing alerts")
                                     break
-                        if biting_detected:
-                            break
+
+                            if drinking_this_frame:
+                                drinking_detected = True
+                                drinking_persistence_counter = DRINKING_PERSISTENCE_FRAMES
+                            elif drinking_persistence_counter > 0:
+                                drinking_persistence_counter -= 1
+                                if drinking_persistence_counter == 0:
+                                    drinking_detected = False
+                        else:
+                            # Between detection frames, decrement persistence counter
+                            if drinking_persistence_counter > 0:
+                                drinking_persistence_counter -= 1
+                                if drinking_persistence_counter == 0:
+                                    drinking_detected = False
+
+                    # Skip fingertip check if drinking object detected
+                    if drinking_detected and config_manager.get("drinking_detection_enabled"):
+                        biting_detected = False
+                    else:
+                        # Check if hand landmarks intersect with mouth polygon
+                        for hand in hand_result.hand_landmarks:
+                            for hand_landmark_index in HAND_INDICES:
+                                landmark_info = hand[hand_landmark_index]
+                                point = Point(landmark_info.x, landmark_info.y)
+                                if buffered_polygon.contains(point):
+                                    # Z-depth check: finger must be at similar depth to lips
+                                    # This filters out fingers passing in front of the face
+                                    if abs(landmark_info.z - lip_avg_z) < Z_DEPTH_THRESHOLD:
+                                        biting_detected = True
+                                        break
+                            if biting_detected:
+                                break
 
             current_time = time.time()
 
