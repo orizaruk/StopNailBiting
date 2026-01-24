@@ -7,3 +7,6 @@ pyinstaller
 pystray
 Pillow
 screeninfo
+winrt-Windows.Media.Control
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections

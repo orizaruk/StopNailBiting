@@ -37,6 +37,11 @@ a = Analysis(
         'pygame',
         'numpy',
         'screeninfo',
+        # WinRT for media control
+        'winrt',
+        'winrt.windows.media.control',
+        'winrt.windows.foundation',
+        'winrt.windows.foundation.collections',
     ],
     hookspath=[],
     hooksconfig={},

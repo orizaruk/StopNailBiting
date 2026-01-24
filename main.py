@@ -31,6 +31,16 @@ from PIL import Image, ImageDraw
 import pystray
 from screeninfo import get_monitors
 
+# Optional WinRT import for media control (graceful degradation if unavailable)
+try:
+    from winrt.windows.media.control import (
+        GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    )
+    WINRT_AVAILABLE = True
+except ImportError:
+    WINRT_AVAILABLE = False
+
 
 class ConfigManager:
     """Manages persistent configuration settings"""
@@ -41,6 +51,7 @@ class ConfigManager:
         "start_with_windows": False,
         "volume": 0.75,
         "drinking_detection_enabled": True,
+        "pause_media_on_alert": True,
     }
 
     def __init__(self):
@@ -296,7 +307,10 @@ class RedFlashAlert:
     def cleanup(self):
         """Destroy all windows"""
         for window in self.windows:
-            window.destroy()
+            try:
+                window.destroy()
+            except Exception:
+                pass  # Window may already be destroyed
         self.windows = []
 
 
@@ -366,6 +380,78 @@ class SoundManager:
         self.stop_sound()
         if self.enabled:
             pygame.mixer.quit()
+
+
+class MediaController:
+    """Pauses and resumes system media during alerts using Windows SMTC.
+
+    Uses the Windows System Media Transport Controls API to pause any currently
+    playing media (Spotify, YouTube, etc.) when an alert triggers, and resume
+    it when the alert ends. Gracefully degrades if WinRT is unavailable.
+
+    Note: WinRT async operations require running outside of Tkinter's STA thread,
+    so all operations are executed via a thread pool.
+    """
+
+    def __init__(self):
+        """Initialize the media controller."""
+        self.paused_session_ids = set()
+        self.enabled = WINRT_AVAILABLE
+        if self.enabled:
+            print("[MediaController] Initialized successfully")
+        else:
+            print("[MediaController] WinRT not available, media control disabled")
+
+    def _get_manager(self):
+        """Get the SMTC session manager (must be called from worker thread)."""
+        return GlobalSystemMediaTransportControlsSessionManager.request_async().get()
+
+    def pause_all(self):
+        """Pause all currently playing media sessions and store their IDs."""
+        if not self.enabled:
+            return
+
+        def _do_pause():
+            self.paused_session_ids.clear()
+            try:
+                manager = self._get_manager()
+                for session in manager.get_sessions():
+                    info = session.get_playback_info()
+                    if info.playback_status == GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
+                        app_id = session.source_app_user_model_id
+                        if session.try_pause_async().get():
+                            self.paused_session_ids.add(app_id)
+                            print(f"[MediaController] Paused: {app_id}")
+            except Exception as e:
+                print(f"[MediaController] Error pausing media: {e}")
+
+        thread = threading.Thread(target=_do_pause, daemon=True)
+        thread.start()
+        thread.join(timeout=2.0)
+
+    def resume_all(self):
+        """Resume only the sessions that were paused by this controller."""
+        if not self.enabled or not self.paused_session_ids:
+            return
+
+        session_ids_to_resume = self.paused_session_ids.copy()
+        self.paused_session_ids.clear()
+
+        def _do_resume():
+            try:
+                manager = self._get_manager()
+                for session in manager.get_sessions():
+                    if session.source_app_user_model_id in session_ids_to_resume:
+                        info = session.get_playback_info()
+                        if info.playback_status == GlobalSystemMediaTransportControlsSessionPlaybackStatus.PAUSED:
+                            session.try_play_async().get()
+                            print(f"[MediaController] Resumed: {session.source_app_user_model_id}")
+            except Exception as e:
+                print(f"[MediaController] Error resuming media: {e}")
+
+        thread = threading.Thread(target=_do_resume, daemon=True)
+        thread.start()
+        thread.join(timeout=2.0)
 
 
 class AppController:
@@ -551,6 +637,16 @@ class AppController:
         self.config.set("drinking_detection_enabled", new_value)
         print(f"[Tray] Drinking detection {'enabled' if new_value else 'disabled'}")
 
+    def is_pause_media_enabled(self, item):
+        """Check if pause media on alert is enabled (for checkbox state)"""
+        return self.config.get("pause_media_on_alert")
+
+    def toggle_pause_media(self, icon, item):
+        """Toggle pause media on alert enabled state"""
+        new_value = not self.config.get("pause_media_on_alert")
+        self.config.set("pause_media_on_alert", new_value)
+        print(f"[Tray] Pause media on alert {'enabled' if new_value else 'disabled'}")
+
     def is_start_with_windows(self, item):
         """Check if start with Windows is enabled (for checkbox state)"""
         return self.config.get("start_with_windows")
@@ -706,6 +802,11 @@ $Shortcut.Save()
                 checked=self.is_sound_enabled,
             ),
             pystray.MenuItem(
+                "Pause Media on Alert",
+                self.toggle_pause_media,
+                checked=self.is_pause_media_enabled,
+            ),
+            pystray.MenuItem(
                 "Drinking Detection",
                 self.toggle_drinking_detection,
                 checked=self.is_drinking_detection_enabled,
@@ -751,9 +852,10 @@ cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     raise IOError("Cannot open webcam")
 
-# Initialize sound and alert managers
+# Initialize sound, alert, and media managers
 sound_manager = SoundManager(SOUND_FILE, volume=config_manager.get("volume"))
 red_flash = RedFlashAlert()
+media_controller = MediaController()
 app_controller = AppController(config_manager, sound_manager)
 
 alert_active = False
@@ -769,11 +871,13 @@ drinking_persistence_counter = 0
 def cleanup():
     """Release all resources on application exit.
 
-    Releases webcam, stops audio, destroys alert windows, and stops tray icon.
-    Called from the finally block to ensure cleanup on normal exit or exception.
+    Releases webcam, stops audio, destroys alert windows, resumes any paused media,
+    and stops tray icon. Called from the finally block to ensure cleanup on normal
+    exit or exception.
     """
     print("\nCleaning up...")
     cap.release()
+    media_controller.resume_all()
     sound_manager.cleanup()
     red_flash.cleanup()
     if app_controller.icon:
@@ -807,6 +911,7 @@ try:
                 if alert_active:
                     sound_manager.stop_sound()
                     red_flash.hide()
+                    media_controller.resume_all()
                     alert_active = False
                     consecutive_detections = 0
                 time.sleep(0.1)
@@ -921,6 +1026,8 @@ try:
 
                 if not alert_active:
                     # Check config before triggering each alert type
+                    if config_manager.get("pause_media_on_alert"):
+                        media_controller.pause_all()
                     if config_manager.get("sound_enabled"):
                         sound_manager.start_sound()
                     if config_manager.get("flash_enabled"):
@@ -932,6 +1039,8 @@ try:
                 if alert_active and time_since_last_bite > COOLDOWN_PERIOD:
                     sound_manager.stop_sound()
                     red_flash.hide()
+                    if config_manager.get("pause_media_on_alert"):
+                        media_controller.resume_all()
                     alert_active = False
 
             # Limit frame rate to reduce CPU usage
