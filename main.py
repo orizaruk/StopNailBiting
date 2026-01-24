@@ -25,6 +25,7 @@ import os
 import sys
 import threading
 import json
+from datetime import datetime, timedelta
 import subprocess
 from PIL import Image, ImageDraw
 import pystray
@@ -140,6 +141,12 @@ DRINKING_CONFIDENCE_THRESHOLD = 0.35  # Minimum confidence for drinking detectio
 DRINKING_PERSISTENCE_FRAMES = 30  # Frames to persist drinking detection state (~2 seconds at 15 FPS)
 DRINKING_CLASS_LABELS = {"cup", "bottle", "wine glass"}
 
+# Detection confidence thresholds (reduce false positives in low light)
+MIN_HAND_DETECTION_CONFIDENCE = 0.5
+MIN_HAND_PRESENCE_CONFIDENCE = 0.5
+MIN_FACE_DETECTION_CONFIDENCE = 0.5
+MIN_FACE_PRESENCE_CONFIDENCE = 0.5
+
 # Initializations of options to configure the model
 BaseOptions = mp.tasks.BaseOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
@@ -158,11 +165,15 @@ hand_options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=hand_model_path),
     running_mode=VisionRunningMode.VIDEO,
     num_hands=2,
+    min_hand_detection_confidence=MIN_HAND_DETECTION_CONFIDENCE,
+    min_hand_presence_confidence=MIN_HAND_PRESENCE_CONFIDENCE,
 )
 
 face_options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=face_model_path),
     running_mode=VisionRunningMode.VIDEO,
+    min_face_detection_confidence=MIN_FACE_DETECTION_CONFIDENCE,
+    min_face_presence_confidence=MIN_FACE_PRESENCE_CONFIDENCE,
 )
 
 object_options = ObjectDetectorOptions(
@@ -376,6 +387,8 @@ class AppController:
         self.sound_manager = sound_manager
         self.running = True
         self.paused = False
+        self.pause_until = None      # datetime when timed pause ends (None = not timed)
+        self.pause_timer = None      # threading.Timer for auto-resume
         self.icon = None
         self.icon_active = self._create_icon_image(active=True)
         self.icon_paused = self._create_icon_image(active=False)
@@ -414,7 +427,15 @@ class AppController:
         return img
 
     def toggle_pause(self, icon, item):
-        """Toggle pause state and update icon"""
+        """Toggle pause state and update icon.
+
+        When resuming from a paused state, cancels any active timed pause.
+        When pausing, sets an indefinite pause (no timer).
+        """
+        if self.paused:
+            # Resuming - cancel any timed pause
+            self._cancel_timed_pause()
+
         self.paused = not self.paused
         status = "Paused" if self.paused else "Monitoring"
         print(f"[Tray] {status}")
@@ -424,16 +445,81 @@ class AppController:
             self.icon.icon = self.icon_paused if self.paused else self.icon_active
             self.icon.title = f"Stop Nail Biting - {status}"
 
+    def pause_for_interval(self, minutes):
+        """Pause detection for a specific duration.
+
+        Args:
+            minutes: Number of minutes to pause for.
+        """
+        # Cancel any existing timer
+        self._cancel_timed_pause()
+
+        self.paused = True
+        self.pause_until = datetime.now() + timedelta(minutes=minutes)
+
+        # Create timer for auto-resume
+        self.pause_timer = threading.Timer(minutes * 60, self._resume_from_timer)
+        self.pause_timer.daemon = True
+        self.pause_timer.start()
+
+        print(f"[Tray] Paused for {minutes} minutes (until {self.pause_until.strftime('%H:%M')})")
+
+        # Update icon and tooltip
+        if self.icon:
+            self.icon.icon = self.icon_paused
+            self.icon.title = f"Stop Nail Biting - Paused for {minutes}m"
+
+    def _resume_from_timer(self):
+        """Called when timed pause expires to resume detection."""
+        self.paused = False
+        self.pause_until = None
+        self.pause_timer = None
+        print("[Tray] Timed pause expired - Monitoring")
+
+        # Update icon and tooltip
+        if self.icon:
+            self.icon.icon = self.icon_active
+            self.icon.title = "Stop Nail Biting - Monitoring"
+
+    def _cancel_timed_pause(self):
+        """Cancel any active timed pause timer."""
+        if self.pause_timer is not None:
+            self.pause_timer.cancel()
+            self.pause_timer = None
+        self.pause_until = None
+
     def quit_app(self, icon, item):
         """Signal the app to quit"""
         print("[Tray] Quit requested")
+        self._cancel_timed_pause()
         self.running = False
         if self.icon:
             self.icon.stop()
 
     def get_pause_text(self, item):
-        """Dynamic menu item text for pause/resume"""
-        return "Resume" if self.paused else "Pause"
+        """Dynamic menu item text for pause/resume.
+
+        Returns:
+            - "Pause" when monitoring is active
+            - "Resume (Xm remaining)" when in timed pause
+            - "Resume" when in indefinite pause
+        """
+        if not self.paused:
+            return "Pause"
+
+        if self.pause_until is not None:
+            remaining = self.pause_until - datetime.now()
+            if remaining.total_seconds() > 0:
+                total_minutes = int(remaining.total_seconds() / 60)
+                hours = total_minutes // 60
+                minutes = total_minutes % 60
+
+                if hours > 0:
+                    return f"Resume ({hours}h {minutes}m remaining)"
+                else:
+                    return f"Resume ({minutes}m remaining)"
+
+        return "Resume"
 
     def is_flash_enabled(self, item):
         """Check if flash is enabled (for checkbox state)"""
@@ -591,7 +677,24 @@ $Shortcut.Save()
             self._volume_menu_item("100%", 1.0),
         )
 
-        menu = pystray.Menu(
+        # Timed pause submenu
+        pause_interval_menu = pystray.Menu(
+            pystray.MenuItem(
+                "30 minutes",
+                lambda icon, item: self.pause_for_interval(30),
+            ),
+            pystray.MenuItem(
+                "1 hour",
+                lambda icon, item: self.pause_for_interval(60),
+            ),
+            pystray.MenuItem(
+                "2 hours",
+                lambda icon, item: self.pause_for_interval(120),
+            ),
+        )
+
+        # Alert settings submenu
+        alert_settings_menu = pystray.Menu(
             pystray.MenuItem(
                 "Enable Flash",
                 self.toggle_flash,
@@ -602,18 +705,23 @@ $Shortcut.Save()
                 self.toggle_sound,
                 checked=self.is_sound_enabled,
             ),
-            pystray.MenuItem("Volume", volume_menu),
             pystray.MenuItem(
-                "Drinking Detection (Cups/Bottles)",
+                "Drinking Detection",
                 self.toggle_drinking_detection,
                 checked=self.is_drinking_detection_enabled,
             ),
+        )
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Alert Settings", alert_settings_menu),
+            pystray.MenuItem("Volume", volume_menu),
             pystray.MenuItem(
                 "Start with Windows",
                 self.toggle_start_with_windows,
                 checked=self.is_start_with_windows,
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Pause for...", pause_interval_menu),
             pystray.MenuItem(
                 self.get_pause_text,
                 self.toggle_pause,
