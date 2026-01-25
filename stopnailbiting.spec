@@ -42,6 +42,12 @@ a = Analysis(
         'winrt.windows.media.control',
         'winrt.windows.foundation',
         'winrt.windows.foundation.collections',
+        # CoreAudio fallback for browser audio muting
+        'pycaw',
+        'pycaw.pycaw',
+        'comtypes',
+        'comtypes.client',
+        'psutil',
     ],
     hookspath=[],
     hooksconfig={},
