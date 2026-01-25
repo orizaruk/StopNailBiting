@@ -49,6 +49,9 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
-# AI 
+# AI
 CLAUDE.md
 AGENTS.md
+
+# Demo scripts (kept separate from main branch)
+demo_preview.py
