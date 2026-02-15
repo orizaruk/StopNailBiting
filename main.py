@@ -26,11 +26,19 @@ import sys
 import threading
 import queue
 import json
+import re
 from datetime import datetime, timedelta
 import subprocess
 from PIL import Image, ImageDraw
 import pystray
 from screeninfo import get_monitors
+
+try:
+    import winsound
+    WINSOUND_AVAILABLE = True
+except ImportError:
+    winsound = None
+    WINSOUND_AVAILABLE = False
 
 # Optional WinRT import for media control (graceful degradation if unavailable)
 GlobalSystemMediaTransportControlsSessionManager = None
@@ -76,6 +84,7 @@ class ConfigManager:
         "volume": 0.75,
         "drinking_detection_enabled": True,
         "pause_media_on_alert": True,
+        "camera_name": None,
     }
 
     def __init__(self):
@@ -131,6 +140,225 @@ class ConfigManager:
         """Set a config value and save"""
         self.config[key] = value
         self.save()
+
+
+class CameraManager:
+    """Handles camera enumeration and opening logic."""
+
+    INDEX_PREFIX = "__index__:"
+    MAX_INDEX_PROBE = 10
+
+    def __init__(self):
+        self._label_by_selection = {}
+        self._selection_by_label = {}
+
+    def _make_index_selection(self, index):
+        return f"{self.INDEX_PREFIX}{index}"
+
+    def _parse_index_selection(self, selection):
+        if not isinstance(selection, str):
+            return None
+        if not selection.startswith(self.INDEX_PREFIX):
+            return None
+        try:
+            return int(selection[len(self.INDEX_PREFIX):])
+        except ValueError:
+            return None
+
+    def selection_to_label(self, selection):
+        if selection is None:
+            return "Auto / Default"
+        if selection in self._label_by_selection:
+            return self._label_by_selection[selection]
+        index = self._parse_index_selection(selection)
+        if index is not None:
+            return f"Camera {index}"
+        return selection
+
+    def selection_to_log_label(self, selection):
+        label = self.selection_to_label(selection)
+        return str(label).encode("ascii", errors="backslashreplace").decode("ascii")
+
+    def _list_windows_camera_names_ffmpeg(self):
+        """List Windows camera names in DirectShow order via ffmpeg."""
+        if sys.platform != "win32":
+            return []
+
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=8,
+                check=False,
+            )
+            output = f"{result.stdout}\n{result.stderr}"
+            output = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        except Exception as e:
+            print(f"[Camera] ffmpeg DirectShow enumeration failed: {e}")
+            return []
+
+        pattern = re.compile(r'"([^"]+)"\s+\((video|none)\)')
+        names = []
+        seen = set()
+        for match in pattern.finditer(output):
+            name = match.group(1).strip()
+            if not name:
+                continue
+            normalized = name.casefold()
+            if normalized in seen:
+                continue
+            names.append(name)
+            seen.add(normalized)
+        return names
+
+    def _list_windows_camera_names_wmi(self):
+        if sys.platform != "win32":
+            return []
+
+        ps_script = (
+            "Get-CimInstance Win32_PnPEntity | "
+            "Where-Object { $_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image' -or $_.Service -eq 'usbvideo' } | "
+            "Select-Object -ExpandProperty Name"
+        )
+
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        except Exception as e:
+            print(f"[Camera] Failed to enumerate Windows camera names: {e}")
+            return []
+
+        unique_names = []
+        seen = set()
+        for name in names:
+            normalized = name.casefold()
+            if normalized in seen:
+                continue
+            unique_names.append(name)
+            seen.add(normalized)
+        return unique_names
+
+    def _list_windows_camera_names(self):
+        """List Windows camera names with best-effort stable ordering."""
+        names = self._list_windows_camera_names_ffmpeg()
+        if names:
+            return names
+        return self._list_windows_camera_names_wmi()
+
+    def _probe_camera_indices(self):
+        indices = []
+        for index in range(self.MAX_INDEX_PROBE):
+            cap = self._open_camera_by_index(index)
+            if cap is None:
+                continue
+            cap.release()
+            indices.append(index)
+        return indices
+
+    def list_camera_choices(self):
+        """Return a list of (selection_id, label) tuples."""
+        if sys.platform == "win32":
+            names = self._list_windows_camera_names()
+            choices = []
+            for index, name in enumerate(names):
+                choices.append((self._make_index_selection(index), f"{name} (Camera {index})"))
+            self._label_by_selection = {selection: label for selection, label in choices}
+            self._selection_by_label = {
+                label.casefold(): selection for selection, label in choices
+            }
+            for index, name in enumerate(names):
+                self._selection_by_label.setdefault(
+                    name.casefold(),
+                    self._make_index_selection(index),
+                )
+            return choices
+
+        indices = self._probe_camera_indices()
+        choices = [(self._make_index_selection(index), f"Camera {index}") for index in indices]
+        self._label_by_selection = {selection: label for selection, label in choices}
+        self._selection_by_label = {
+            label.casefold(): selection for selection, label in choices
+        }
+        return choices
+
+    def _open_camera_by_name(self, name):
+        # This OpenCV build cannot open Windows cameras by name.
+        return None
+
+    def _open_camera_by_index(self, index):
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            if cap is not None and cap.isOpened():
+                ok, _ = cap.read()
+                if ok:
+                    return cap
+            if cap is not None:
+                cap.release()
+
+        cap = cv2.VideoCapture(index)
+
+        if cap is not None and cap.isOpened():
+            ok, _ = cap.read()
+            if ok:
+                return cap
+        if cap is not None:
+            cap.release()
+        return None
+
+    def _open_camera_by_selection(self, selection):
+        index = self._parse_index_selection(selection)
+        if index is not None:
+            return self._open_camera_by_index(index)
+        if sys.platform == "win32":
+            mapped = self._selection_by_label.get(str(selection).casefold())
+            if mapped:
+                mapped_index = self._parse_index_selection(mapped)
+                if mapped_index is not None:
+                    return self._open_camera_by_index(mapped_index)
+        return self._open_camera_by_name(selection)
+
+    def open_camera(self, preferred_selection=None):
+        """Open preferred camera if possible, else fallback to first working one."""
+        choices = self.list_camera_choices()
+        resolved_preferred = preferred_selection
+
+        if isinstance(preferred_selection, str):
+            mapped = self._selection_by_label.get(preferred_selection.casefold())
+            if mapped:
+                resolved_preferred = mapped
+
+        if resolved_preferred:
+            cap = self._open_camera_by_selection(resolved_preferred)
+            if cap is not None:
+                return cap, resolved_preferred
+
+        if sys.platform == "win32":
+            for selection, _label in choices:
+                if selection == resolved_preferred:
+                    continue
+                cap = self._open_camera_by_selection(selection)
+                if cap is not None:
+                    return cap, selection
+            return None, None
+
+        for index in range(self.MAX_INDEX_PROBE):
+            selection = self._make_index_selection(index)
+            if selection == resolved_preferred:
+                continue
+            cap = self._open_camera_by_index(index)
+            if cap is not None:
+                return cap, selection
+
+        return None, None
 
 
 def resource_path(relative_path):
@@ -353,56 +581,92 @@ class SoundManager:
         self.sound_playing = False
         self.alert_sound = None
         self.volume = volume
+        self.backend = "none"
+        self._beep_stop_event = threading.Event()
+        self._beep_thread = None
+
+        if sound_file is not None and os.path.exists(sound_file):
+            try:
+                pygame.mixer.init()
+                self.alert_sound = pygame.mixer.Sound(sound_file)
+                self.alert_sound.set_volume(self.volume)
+                self.enabled = True
+                self.backend = "pygame"
+                print(f"[Info] Sound loaded successfully: {sound_file} (volume: {int(volume * 100)}%)")
+                return
+            except pygame.error as e:
+                print(f"[Warning] Failed to initialize pygame audio: {e}")
+            except Exception as e:
+                print(f"[Warning] Unexpected error loading sound file: {e}")
 
         if sound_file is None:
-            print("[Info] Sound disabled by configuration")
-            return
+            print("[Warning] No sound file found (expected assets/noise.mp3|.wav|.ogg)")
+        else:
+            print(f"[Warning] Sound file not found: {sound_file}")
 
-        try:
-            if not os.path.exists(sound_file):
-                print(f"[Warning] Sound file not found: {sound_file}")
-                print(f"          Expected location: {os.path.abspath(sound_file)}")
-                print("          Running in visual-only mode (no audio alerts)")
-                return
-
-            pygame.mixer.init()
-            self.alert_sound = pygame.mixer.Sound(sound_file)
-            self.alert_sound.set_volume(self.volume)
+        if WINSOUND_AVAILABLE and sys.platform == "win32":
             self.enabled = True
-            print(f"[Info] Sound loaded successfully: {sound_file} (volume: {int(volume * 100)}%)")
+            self.backend = "winsound"
+            print("[Info] Using Windows beep fallback for alert sound")
+        else:
+            print("[Warning] No audio backend available - running in visual-only mode")
 
-        except pygame.error as e:
-            print(f"[Warning] Failed to initialize audio: {e}")
-            print("          Running in visual-only mode (no audio alerts)")
-        except Exception as e:
-            print(f"[Warning] Unexpected error loading sound: {e}")
-            print("          Running in visual-only mode (no audio alerts)")
+    def _beep_loop(self):
+        while not self._beep_stop_event.is_set():
+            try:
+                winsound.Beep(1400, 180)
+            except Exception:
+                break
+            if self._beep_stop_event.wait(0.12):
+                break
 
     def start_sound(self):
         """Start the alert sound if not already playing"""
-        if self.enabled and not self.sound_playing:
+        if not self.enabled or self.sound_playing:
+            return
+
+        if self.backend == "pygame":
             self.alert_sound.play(loops=-1)
+            self.sound_playing = True
+            print("Alert sound started")
+            return
+
+        if self.backend == "winsound":
+            self._beep_stop_event.clear()
+            self._beep_thread = threading.Thread(target=self._beep_loop, daemon=True)
+            self._beep_thread.start()
             self.sound_playing = True
             print("Alert sound started")
 
     def stop_sound(self):
         """Stop the alert sound"""
-        if self.enabled and self.sound_playing:
+        if not self.enabled or not self.sound_playing:
+            return
+
+        if self.backend == "pygame":
             self.alert_sound.stop()
-            self.sound_playing = False
-            print("Alert sound stopped")
+        elif self.backend == "winsound":
+            self._beep_stop_event.set()
+            if self._beep_thread is not None:
+                self._beep_thread.join(timeout=0.5)
+                self._beep_thread = None
+
+        self.sound_playing = False
+        print("Alert sound stopped")
 
     def set_volume(self, volume):
         """Set the alert sound volume (0.0 to 1.0)"""
         self.volume = volume
-        if self.enabled and self.alert_sound:
+        if self.backend == "pygame" and self.alert_sound:
             self.alert_sound.set_volume(volume)
             print(f"[Sound] Volume set to {int(volume * 100)}%")
+        elif self.backend == "winsound":
+            print("[Sound] Volume changes are not supported for Windows beep fallback")
 
     def cleanup(self):
         """Release pygame mixer resources"""
         self.stop_sound()
-        if self.enabled:
+        if self.backend == "pygame":
             pygame.mixer.quit()
 
 
@@ -699,46 +963,33 @@ class MediaController:
 
 
 class AppController:
-    """Controls app state and system tray integration.
+    """Controls app state and system tray integration."""
 
-    Manages the pystray system tray icon, menu actions, and shared state
-    (running/paused) that coordinates between the main detection loop
-    and the tray UI thread.
-    """
-
-    def __init__(self, config, sound_manager):
-        """Initialize app controller with config and sound manager.
-
-        Args:
-            config: ConfigManager instance for persisting settings.
-            sound_manager: SoundManager instance for volume control integration.
-        """
+    def __init__(self, config, sound_manager, camera_manager):
+        """Initialize app controller with config and integration managers."""
         self.config = config
         self.sound_manager = sound_manager
+        self.camera_manager = camera_manager
         self.running = True
         self.paused = False
-        self.pause_until = None      # datetime when timed pause ends (None = not timed)
-        self.pause_timer = None      # threading.Timer for auto-resume
+        self.pause_until = None
+        self.pause_timer = None
         self.icon = None
         self.icon_active = self._create_icon_image(active=True)
         self.icon_paused = self._create_icon_image(active=False)
+        self.camera_unavailable = False
+        self.camera_choices = self.camera_manager.list_camera_choices()
+        self.active_camera_selection = self.config.get("camera_name")
+        self._pending_camera_switch = None
+        self._has_pending_camera_switch = False
+        self._camera_switch_lock = threading.Lock()
 
     def _create_icon_image(self, active=True):
-        """Create a 64x64 tray icon image.
-
-        Args:
-            active: If True, creates a red icon (monitoring). If False, gray (paused).
-
-        Returns:
-            PIL.Image.Image: RGBA image suitable for pystray icon.
-        """
+        """Create a 64x64 tray icon image."""
         size = 64
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-
-        # Red when monitoring, gray when paused
         fill_color = (220, 53, 69) if active else (128, 128, 128)
-
         margin = 4
         draw.ellipse(
             [margin, margin, size - margin, size - margin],
@@ -746,58 +997,89 @@ class AppController:
             outline=(255, 255, 255),
             width=2,
         )
-
-        # Center symbol
         center = size // 2
         draw.rectangle(
             [center - 8, center - 12, center + 8, center + 12],
             fill=(255, 255, 255),
         )
-
         return img
 
-    def toggle_pause(self, icon, item):
-        """Toggle pause state and update icon.
-
-        When resuming from a paused state, cancels any active timed pause.
-        When pausing, sets an indefinite pause (no timer).
-        """
+    def _current_status_text(self):
+        if self.camera_unavailable:
+            return "No camera"
         if self.paused:
-            # Resuming - cancel any timed pause
-            self._cancel_timed_pause()
+            return "Paused"
+        return "Monitoring"
 
+    def _update_icon_and_title(self):
+        if not self.icon:
+            return
+
+        status = self._current_status_text()
+        is_paused_visual = self.paused or self.camera_unavailable
+        self.icon.icon = self.icon_paused if is_paused_visual else self.icon_active
+        camera_label = self.camera_manager.selection_to_label(self.active_camera_selection)
+        self.icon.title = f"Stop Nail Biting - {status} ({camera_label})"
+
+    def _update_menu(self):
+        if not self.icon:
+            return
+        self.icon.menu = self._build_main_menu()
+        try:
+            self.icon.update_menu()
+        except Exception:
+            pass
+
+    def set_camera_unavailable(self, unavailable):
+        self.camera_unavailable = unavailable
+        self._update_icon_and_title()
+        self._update_menu()
+
+    def set_active_camera(self, selection):
+        self.active_camera_selection = selection
+        self._update_icon_and_title()
+        self._update_menu()
+
+    def refresh_camera_choices(self, icon=None, item=None):
+        self.camera_choices = self.camera_manager.list_camera_choices()
+        print(f"[Tray] Cameras refreshed ({len(self.camera_choices)} found)")
+        self._update_menu()
+
+    def request_camera_switch(self, selection):
+        with self._camera_switch_lock:
+            self._pending_camera_switch = selection
+            self._has_pending_camera_switch = True
+        self.config.set("camera_name", selection)
+        print(f"[Tray] Camera switch requested: {self.camera_manager.selection_to_log_label(selection)}")
+
+    def consume_camera_switch_request(self):
+        with self._camera_switch_lock:
+            if not self._has_pending_camera_switch:
+                return False, None
+            selection = self._pending_camera_switch
+            self._pending_camera_switch = None
+            self._has_pending_camera_switch = False
+        return True, selection
+
+    def toggle_pause(self, icon, item):
+        """Toggle pause state and update icon."""
+        if self.paused:
+            self._cancel_timed_pause()
         self.paused = not self.paused
         status = "Paused" if self.paused else "Monitoring"
         print(f"[Tray] {status}")
-
-        # Update icon and tooltip
-        if self.icon:
-            self.icon.icon = self.icon_paused if self.paused else self.icon_active
-            self.icon.title = f"Stop Nail Biting - {status}"
+        self._update_icon_and_title()
 
     def pause_for_interval(self, minutes):
-        """Pause detection for a specific duration.
-
-        Args:
-            minutes: Number of minutes to pause for.
-        """
-        # Cancel any existing timer
+        """Pause detection for a specific duration."""
         self._cancel_timed_pause()
-
         self.paused = True
         self.pause_until = datetime.now() + timedelta(minutes=minutes)
-
-        # Create timer for auto-resume
         self.pause_timer = threading.Timer(minutes * 60, self._resume_from_timer)
         self.pause_timer.daemon = True
         self.pause_timer.start()
-
         print(f"[Tray] Paused for {minutes} minutes (until {self.pause_until.strftime('%H:%M')})")
-
-        # Update icon and tooltip
-        if self.icon:
-            self.icon.icon = self.icon_paused
-            self.icon.title = f"Stop Nail Biting - Paused for {minutes}m"
+        self._update_icon_and_title()
 
     def _resume_from_timer(self):
         """Called when timed pause expires to resume detection."""
@@ -805,11 +1087,7 @@ class AppController:
         self.pause_until = None
         self.pause_timer = None
         print("[Tray] Timed pause expired - Monitoring")
-
-        # Update icon and tooltip
-        if self.icon:
-            self.icon.icon = self.icon_active
-            self.icon.title = "Stop Nail Biting - Monitoring"
+        self._update_icon_and_title()
 
     def _cancel_timed_pause(self):
         """Cancel any active timed pause timer."""
@@ -819,7 +1097,7 @@ class AppController:
         self.pause_until = None
 
     def quit_app(self, icon, item):
-        """Signal the app to quit"""
+        """Signal the app to quit."""
         print("[Tray] Quit requested")
         self._cancel_timed_pause()
         self.running = False
@@ -827,13 +1105,7 @@ class AppController:
             self.icon.stop()
 
     def get_pause_text(self, item):
-        """Dynamic menu item text for pause/resume.
-
-        Returns:
-            - "Pause" when monitoring is active
-            - "Resume (Xm remaining)" when in timed pause
-            - "Resume" when in indefinite pause
-        """
+        """Dynamic menu item text for pause/resume."""
         if not self.paused:
             return "Pause"
 
@@ -843,67 +1115,55 @@ class AppController:
                 total_minutes = int(remaining.total_seconds() / 60)
                 hours = total_minutes // 60
                 minutes = total_minutes % 60
-
                 if hours > 0:
                     return f"Resume ({hours}h {minutes}m remaining)"
-                else:
-                    return f"Resume ({minutes}m remaining)"
+                return f"Resume ({minutes}m remaining)"
 
         return "Resume"
 
     def is_flash_enabled(self, item):
-        """Check if flash is enabled (for checkbox state)"""
         return self.config.get("flash_enabled")
 
     def is_sound_enabled(self, item):
-        """Check if sound is enabled (for checkbox state)"""
         return self.config.get("sound_enabled")
 
     def toggle_flash(self, icon, item):
-        """Toggle flash enabled state"""
         new_value = not self.config.get("flash_enabled")
         self.config.set("flash_enabled", new_value)
         print(f"[Tray] Flash {'enabled' if new_value else 'disabled'}")
 
     def toggle_sound(self, icon, item):
-        """Toggle sound enabled state"""
         new_value = not self.config.get("sound_enabled")
         self.config.set("sound_enabled", new_value)
+        if not new_value:
+            self.sound_manager.stop_sound()
         print(f"[Tray] Sound {'enabled' if new_value else 'disabled'}")
 
     def is_drinking_detection_enabled(self, item):
-        """Check if drinking detection is enabled (for checkbox state)"""
         return self.config.get("drinking_detection_enabled")
 
     def toggle_drinking_detection(self, icon, item):
-        """Toggle drinking detection enabled state"""
         new_value = not self.config.get("drinking_detection_enabled")
         self.config.set("drinking_detection_enabled", new_value)
         print(f"[Tray] Drinking detection {'enabled' if new_value else 'disabled'}")
 
     def is_pause_media_enabled(self, item):
-        """Check if pause media on alert is enabled (for checkbox state)"""
         return self.config.get("pause_media_on_alert")
 
     def toggle_pause_media(self, icon, item):
-        """Toggle pause media on alert enabled state"""
         new_value = not self.config.get("pause_media_on_alert")
         self.config.set("pause_media_on_alert", new_value)
         print(f"[Tray] Pause media on alert {'enabled' if new_value else 'disabled'}")
 
     def is_start_with_windows(self, item):
-        """Check if start with Windows is enabled (for checkbox state)"""
         return self.config.get("start_with_windows")
 
     def toggle_start_with_windows(self, icon, item):
-        """Toggle start with Windows"""
         new_value = not self.config.get("start_with_windows")
-
         if new_value:
             success = self._create_startup_shortcut()
         else:
             success = self._remove_startup_shortcut()
-
         if success:
             self.config.set("start_with_windows", new_value)
             print(f"[Tray] Start with Windows {'enabled' if new_value else 'disabled'}")
@@ -911,7 +1171,6 @@ class AppController:
             print("[Tray] Failed to update startup setting")
 
     def _get_startup_folder(self):
-        """Get the Windows Startup folder path"""
         if sys.platform != "win32":
             return None
         return os.path.join(
@@ -920,35 +1179,27 @@ class AppController:
         )
 
     def _get_shortcut_path(self):
-        """Get the path for the startup shortcut"""
         startup_folder = self._get_startup_folder()
         if startup_folder:
             return os.path.join(startup_folder, "StopNailBiting.lnk")
         return None
 
     def _get_exe_path(self):
-        """Get the path to the current executable"""
         if getattr(sys, 'frozen', False):
-            # Running as PyInstaller bundle
             return sys.executable
-        else:
-            # Running as script - return python + script path
-            return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+        return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
 
     def _create_startup_shortcut(self):
-        """Create a shortcut in the Windows Startup folder"""
         if sys.platform != "win32":
             print("[Startup] Not on Windows, skipping")
             return False
 
         shortcut_path = self._get_shortcut_path()
         exe_path = self._get_exe_path()
-
         if not shortcut_path:
             return False
 
         try:
-            # Use PowerShell to create the shortcut
             ps_script = f'''
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("{shortcut_path}")
@@ -969,9 +1220,7 @@ $Shortcut.Save()
             return False
 
     def _remove_startup_shortcut(self):
-        """Remove the shortcut from the Windows Startup folder"""
         shortcut_path = self._get_shortcut_path()
-
         if not shortcut_path:
             return False
 
@@ -985,15 +1234,6 @@ $Shortcut.Save()
             return False
 
     def _volume_menu_item(self, label, level):
-        """Create a volume menu item with radio-button behavior.
-
-        Args:
-            label: Display text for the menu item (e.g., "75%").
-            level: Volume level from 0.0 to 1.0.
-
-        Returns:
-            pystray.MenuItem: Menu item that shows checked state and updates volume.
-        """
         def is_checked(item):
             return abs(self.config.get("volume") - level) < 0.01
 
@@ -1003,13 +1243,40 @@ $Shortcut.Save()
 
         return pystray.MenuItem(label, set_level, checked=is_checked)
 
-    def setup_tray(self):
-        """Create and configure the system tray icon with menu.
+    def _camera_menu_item(self, selection, label):
+        def set_camera(icon, item):
+            self.request_camera_switch(selection)
 
-        Returns:
-            pystray.Icon: Configured tray icon ready to run.
-        """
-        # Volume submenu
+        def is_selected(item):
+            return self.active_camera_selection == selection
+
+        return pystray.MenuItem(label, set_camera, checked=is_selected)
+
+    def _build_camera_menu(self):
+        items = [
+            pystray.MenuItem("Refresh Cameras", self.refresh_camera_choices),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Auto / Default",
+                lambda icon, item: self.request_camera_switch(None),
+                checked=lambda item: self.active_camera_selection is None,
+            ),
+        ]
+
+        if self.camera_choices:
+            for selection, label in self.camera_choices:
+                items.append(self._camera_menu_item(selection, label))
+        else:
+            items.append(
+                pystray.MenuItem(
+                    "No cameras found",
+                    lambda icon, item: None,
+                    enabled=False,
+                )
+            )
+        return pystray.Menu(*items)
+
+    def _build_main_menu(self):
         volume_menu = pystray.Menu(
             self._volume_menu_item("25%", 0.25),
             self._volume_menu_item("50%", 0.50),
@@ -1017,7 +1284,6 @@ $Shortcut.Save()
             self._volume_menu_item("100%", 1.0),
         )
 
-        # Timed pause submenu
         pause_interval_menu = pystray.Menu(
             pystray.MenuItem(
                 "30 minutes",
@@ -1033,7 +1299,6 @@ $Shortcut.Save()
             ),
         )
 
-        # Alert settings submenu
         alert_settings_menu = pystray.Menu(
             pystray.MenuItem(
                 "Enable Flash",
@@ -1057,7 +1322,8 @@ $Shortcut.Save()
             ),
         )
 
-        menu = pystray.Menu(
+        return pystray.Menu(
+            pystray.MenuItem("Choose Camera", self._build_camera_menu()),
             pystray.MenuItem("Alert Settings", alert_settings_menu),
             pystray.MenuItem("Volume", volume_menu),
             pystray.MenuItem(
@@ -1074,33 +1340,33 @@ $Shortcut.Save()
             pystray.MenuItem("Quit", self.quit_app),
         )
 
+    def setup_tray(self):
+        """Create and configure the system tray icon with menu."""
         self.icon = pystray.Icon(
             "StopNailBiting",
             self.icon_active,
             "Stop Nail Biting - Monitoring",
-            menu,
+            self._build_main_menu(),
         )
+        self._update_icon_and_title()
         return self.icon
 
     def run_tray(self):
-        """Run the tray icon (call from a separate thread)"""
+        """Run the tray icon (call from a separate thread)."""
         icon = self.setup_tray()
         icon.run()
 
 
 # Initialize config first (needed by other components)
 config_manager = ConfigManager()
-
-# Initialize the webcam
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    raise IOError("Cannot open webcam")
+camera_manager = CameraManager()
 
 # Initialize sound, alert, and media managers
 sound_manager = SoundManager(SOUND_FILE, volume=config_manager.get("volume"))
 red_flash = RedFlashAlert()
 media_controller = MediaController()
-app_controller = AppController(config_manager, sound_manager)
+app_controller = AppController(config_manager, sound_manager, camera_manager)
+cap = None
 
 alert_active = False
 last_biting_time = 0  # Track when biting was last detected
@@ -1112,6 +1378,57 @@ drinking_detected = False
 drinking_persistence_counter = 0
 
 
+def _stop_active_alert():
+    """Reset active alert state before camera soft-reset or downtime."""
+    global alert_active
+    global consecutive_detections
+    global last_biting_time
+    global drinking_frame_counter
+    global drinking_detected
+    global drinking_persistence_counter
+
+    if alert_active:
+        sound_manager.stop_sound()
+        red_flash.hide()
+        media_controller.resume_all()
+        alert_active = False
+
+    consecutive_detections = 0
+    last_biting_time = 0
+    drinking_frame_counter = 0
+    drinking_detected = False
+    drinking_persistence_counter = 0
+
+
+def _warmup_camera(capture, frames=2):
+    """Read a couple of frames after opening to avoid transient failures."""
+    for _ in range(frames):
+        if capture is None:
+            return
+        capture.read()
+        time.sleep(0.02)
+
+
+def _open_camera_and_update_state(preferred_selection, reason):
+    """Open preferred camera with fallback and synchronize tray + config state."""
+    opened_cap, active_selection = camera_manager.open_camera(preferred_selection)
+
+    if active_selection is not None and active_selection != config_manager.get("camera_name"):
+        config_manager.set("camera_name", active_selection)
+
+    app_controller.set_active_camera(active_selection)
+    app_controller.set_camera_unavailable(opened_cap is None)
+
+    if opened_cap is None:
+        print(f"[Camera] No available camera ({reason})")
+    else:
+        print(
+            f"[Camera] Active camera: {camera_manager.selection_to_log_label(active_selection)} [{active_selection}] ({reason})"
+        )
+        _warmup_camera(opened_cap)
+    return opened_cap
+
+
 def cleanup():
     """Release all resources on application exit.
 
@@ -1120,7 +1437,8 @@ def cleanup():
     exit or exception.
     """
     print("\nCleaning up...")
-    cap.release()
+    if cap is not None:
+        cap.release()
     media_controller.resume_all(wait=True)
     sound_manager.cleanup()
     red_flash.cleanup()
@@ -1130,6 +1448,11 @@ def cleanup():
 
 
 try:
+    cap = _open_camera_and_update_state(
+        config_manager.get("camera_name"),
+        reason="startup",
+    )
+
     # Start the system tray icon in a background thread
     tray_thread = threading.Thread(target=app_controller.run_tray, daemon=True)
     tray_thread.start()
@@ -1149,22 +1472,38 @@ try:
             # UPDATE THE RED FLASH (must be called even when paused for tkinter)
             red_flash.update()
 
+            has_switch_request, requested_selection = app_controller.consume_camera_switch_request()
+            if has_switch_request:
+                _stop_active_alert()
+                if cap is not None:
+                    cap.release()
+                cap = _open_camera_and_update_state(
+                    requested_selection,
+                    reason="tray switch",
+                )
+
+            if cap is None:
+                time.sleep(0.2)
+                continue
+
             # Skip detection if paused
             if app_controller.paused:
                 # Make sure alerts are off when paused
-                if alert_active:
-                    sound_manager.stop_sound()
-                    red_flash.hide()
-                    media_controller.resume_all()
-                    alert_active = False
-                    consecutive_detections = 0
+                _stop_active_alert()
                 time.sleep(0.1)
                 continue
 
             ret, frame = cap.read()
             if not ret:
-                print("Can't receive frame (stream end?). Exiting ...")
-                break
+                print("[Camera] Frame read failed - attempting reopen")
+                cap.release()
+                cap = _open_camera_and_update_state(
+                    app_controller.active_camera_selection,
+                    reason="read failure recovery",
+                )
+                _stop_active_alert()
+                time.sleep(0.2)
+                continue
 
             # Get current timestamp in milliseconds (must be monotonically increasing)
             timestamp_ms = int(time.time() * 1000)

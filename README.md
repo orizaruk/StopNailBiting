@@ -111,6 +111,8 @@ Right-click the tray icon to access settings:
 
 | Option | Description |
 |--------|-------------|
+| **Choose Camera** | Pick active webcam from detected devices, or use Auto/Default |
+| └─ Refresh Cameras | Re-scan connected camera devices without restarting |
 | **Alert Settings** | |
 | ├─ Enable Flash | Toggle fullscreen red flash |
 | ├─ Enable Sound | Toggle audio alert |
@@ -142,7 +144,8 @@ Settings are saved to `%APPDATA%\StopNailBiting\config.json`:
   "pause_media_on_alert": true,
   "drinking_detection_enabled": true,
   "start_with_windows": false,
-  "volume": 0.75
+  "volume": 0.75,
+  "camera_name": null
 }
 ```
 
@@ -152,6 +155,7 @@ Place a file named `noise` with a supported extension in the `assets/` folder:
 - `noise.mp3`, `noise.wav`, or `noise.ogg`
 
 The app auto-detects whichever format is present.
+If no file is found on Windows, the app falls back to a built-in beep alert.
 
 ---
 

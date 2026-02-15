@@ -6,9 +6,6 @@ env/
 .env/
 ENV/
 
-# Assets (test images, sounds)
-assets/
-
 # Python
 __pycache__/
 *.py[cod]
