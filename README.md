@@ -6,7 +6,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Platform">
-  <img src="https://img.shields.io/badge/version-1.1.0-green?style=flat-square" alt="Version">
   <img src="https://img.shields.io/github/license/orizaruk/stopnailbiting?style=flat-square" alt="License">
 </p>
 
@@ -86,9 +85,16 @@ python main.py
 
 ```powershell
 # After completing Option 2 setup:
-pyinstaller stopnailbiting.spec
+pyinstaller --clean stopnailbiting.spec
 
 # Output: dist/StopNailBiting.exe
+```
+
+For a fully fresh rebuild:
+
+```powershell
+Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+pyinstaller --clean stopnailbiting.spec
 ```
 
 ---
@@ -118,7 +124,7 @@ Right-click the tray icon to access settings:
 | ├─ Enable Sound | Toggle audio alert |
 | ├─ Pause Media on Alert | Auto-pause media players during alerts |
 | └─ Drinking Detection | Skip alerts when holding a drink |
-| **Volume** | Set alert volume (25%, 50%, 75%, 100%) |
+| **Volume** | Set alert volume (100%, 75%, 50%, 25%) |
 | **Start with Windows** | Auto-launch on login |
 | **Pause for...** | Pause detection for 30min, 1hr, or 2hrs |
 | **Pause / Resume** | Toggle detection on/off |
@@ -151,10 +157,12 @@ Settings are saved to `%APPDATA%\StopNailBiting\config.json`:
 
 ### Custom Sound
 
-Place a file named `noise` with a supported extension in the `assets/` folder:
+The repo includes a bundled default tone at `assets/noise.wav` (seamless continuous loop).
+
+To use a custom alert, place a file named `noise` with a supported extension in the `assets/` folder:
 - `noise.mp3`, `noise.wav`, or `noise.ogg`
 
-The app auto-detects whichever format is present.
+The app auto-detects in this order: `noise.mp3` -> `noise.wav` -> `noise.ogg`.
 If no file is found on Windows, the app falls back to a built-in beep alert.
 
 ---
@@ -168,7 +176,10 @@ If no file is found on Windows, the app falls back to a built-in beep alert.
 - [Shapely](https://shapely.readthedocs.io/) — Geometric polygon operations
 - [Pygame](https://www.pygame.org/) — Audio playback
 - [pystray](https://github.com/moses-palmer/pystray) — System tray integration
+- [Pillow](https://python-pillow.org/) — Tray icon rendering
+- [screeninfo](https://pypi.org/project/screeninfo/) — Multi-monitor detection for flash alerts
 - [WinRT](https://pypi.org/project/winrt-Windows.Media.Control/) — Media playback control
+- [pycaw](https://github.com/AndreMiras/pycaw) + [comtypes](https://pypi.org/project/comtypes/) — Browser/CoreAudio mute fallback
 
 ### Detection Parameters
 

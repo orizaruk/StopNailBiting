@@ -1278,10 +1278,10 @@ $Shortcut.Save()
 
     def _build_main_menu(self):
         volume_menu = pystray.Menu(
-            self._volume_menu_item("25%", 0.25),
-            self._volume_menu_item("50%", 0.50),
-            self._volume_menu_item("75%", 0.75),
             self._volume_menu_item("100%", 1.0),
+            self._volume_menu_item("75%", 0.75),
+            self._volume_menu_item("50%", 0.50),
+            self._volume_menu_item("25%", 0.25),
         )
 
         pause_interval_menu = pystray.Menu(
