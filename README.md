@@ -45,6 +45,7 @@ By default, the alert is a flashing red screen and a BEEP noise, but you can con
 |---------|-------------|
 | **Real-time Detection** | Uses MediaPipe hand and face tracking |
 | **Dual Alert System** | Fullscreen red flash + audio alert (both configurable) |
+| **Display Hotplug Handling** | If monitors are connected/disconnected while running, alert windows auto-reconfigure on the next alert |
 | **Media Pause** | Automatically pauses Spotify, YouTube, VLC, etc. during alerts and resumes after |
 | **Drinking Detection** | Reduces false positives by detecting cups, bottles, and glasses |
 | **System Tray** | Runs quietly in the background |
