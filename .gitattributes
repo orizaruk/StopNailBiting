@@ -1,0 +1,15 @@
+# Normalize text files across Windows + WSL/Linux.
+* text=auto
+
+# Keep binary assets/models untouched.
+*.png binary
+*.gif binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.tflite binary
+*.task binary
+*.exe binary
+*.dll binary

@@ -348,8 +348,8 @@ class CameraManager:
                     return self._open_camera_by_index(mapped_index)
         return self._open_camera_by_name(selection)
 
-    def open_camera(self, preferred_selection=None):
-        """Open preferred camera if possible, else fallback to first working one."""
+    def open_camera(self, preferred_selection=None, fallback=True):
+        """Open preferred camera and optionally fallback to another working camera."""
         choices = self.list_camera_choices()
         resolved_preferred = preferred_selection
 
@@ -362,6 +362,11 @@ class CameraManager:
             cap = self._open_camera_by_selection(resolved_preferred)
             if cap is not None:
                 return cap, resolved_preferred
+            if not fallback:
+                return None, resolved_preferred
+
+        if not fallback:
+            return None, None
 
         if sys.platform == "win32":
             for selection, _label in choices:
@@ -1077,10 +1082,10 @@ class AppController:
         return img
 
     def _current_status_text(self):
-        if self.camera_unavailable:
-            return "No camera"
         if self.paused:
             return "Paused"
+        if self.camera_unavailable:
+            return "No camera"
         return "Monitoring"
 
     def _update_icon_and_title(self):
@@ -1482,9 +1487,12 @@ def _warmup_camera(capture, frames=2):
         time.sleep(0.02)
 
 
-def _open_camera_and_update_state(preferred_selection, reason):
-    """Open preferred camera with fallback and synchronize tray + config state."""
-    opened_cap, active_selection = camera_manager.open_camera(preferred_selection)
+def _open_camera_and_update_state(preferred_selection, reason, fallback=True):
+    """Open a camera and synchronize tray + config state."""
+    opened_cap, active_selection = camera_manager.open_camera(
+        preferred_selection,
+        fallback=fallback,
+    )
 
     if active_selection is not None and active_selection != config_manager.get("camera_name"):
         config_manager.set("camera_name", active_selection)
@@ -1540,29 +1548,73 @@ try:
     ) as object_detector:
 
         biting_detected = False
+        was_paused_last_tick = app_controller.paused
+        next_reacquire_attempt_at = 0.0
+        last_reacquire_failure_log_time = 0.0
 
         while app_controller.running:
             # UPDATE THE RED FLASH (must be called even when paused for tkinter)
             red_flash.update()
+
+            if app_controller.paused:
+                _stop_active_alert()
+                if not was_paused_last_tick:
+                    if cap is not None:
+                        cap.release()
+                        cap = None
+                        print("[Camera] Released camera due to pause")
+                was_paused_last_tick = True
+                time.sleep(0.1)
+                continue
+
+            if was_paused_last_tick:
+                was_paused_last_tick = False
+                next_reacquire_attempt_at = 0.0
+                last_reacquire_failure_log_time = 0.0
+                print("[Camera] Resume requested - attempting to reacquire camera")
 
             has_switch_request, requested_selection = app_controller.consume_camera_switch_request()
             if has_switch_request:
                 _stop_active_alert()
                 if cap is not None:
                     cap.release()
+                    cap = None
                 cap = _open_camera_and_update_state(
                     requested_selection,
                     reason="tray switch",
                 )
+                next_reacquire_attempt_at = 0.0
+                last_reacquire_failure_log_time = 0.0
 
             if cap is None:
-                time.sleep(0.2)
-                continue
+                now = time.time()
+                if now >= next_reacquire_attempt_at:
+                    preferred_selection = app_controller.active_camera_selection
+                    if preferred_selection is None:
+                        preferred_selection = config_manager.get("camera_name")
 
-            # Skip detection if paused
-            if app_controller.paused:
-                # Make sure alerts are off when paused
-                _stop_active_alert()
+                    strict_selected_camera = preferred_selection is not None
+                    cap = _open_camera_and_update_state(
+                        preferred_selection,
+                        reason="resume reacquire" if strict_selected_camera else "resume reacquire (auto)",
+                        fallback=not strict_selected_camera,
+                    )
+
+                    if cap is None:
+                        if (
+                            last_reacquire_failure_log_time == 0.0
+                            or now - last_reacquire_failure_log_time >= 5.0
+                        ):
+                            if strict_selected_camera:
+                                print("[Camera] Selected camera unavailable - retrying in 1.0s")
+                            else:
+                                print("[Camera] No available camera - retrying in 1.0s")
+                            last_reacquire_failure_log_time = now
+                        next_reacquire_attempt_at = now + 1.0
+                    else:
+                        print("[Camera] Camera reacquired")
+                        next_reacquire_attempt_at = 0.0
+                        last_reacquire_failure_log_time = 0.0
                 time.sleep(0.1)
                 continue
 
