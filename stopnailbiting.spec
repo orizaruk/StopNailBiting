@@ -49,11 +49,16 @@ a = Analysis(
     runtime_hooks=[],
     # Exclude removed/unused heavy packages so PyInstaller never bundles them
     # even if they linger in the build venv. shapely (GEOS) and pygame (SDL)
-    # were replaced; the rest are common transitive bloat the app never imports.
+    # were replaced. scipy/jax/jaxlib/pandas are optional mediapipe deps that our
+    # import path never touches (verified: mediapipe imports fine without them).
+    #
+    # NOTE: matplotlib must NOT be excluded. `import mediapipe` eagerly imports
+    # mediapipe.tasks.python.vision -> drawing_styles -> drawing_utils, which does
+    # `import matplotlib.pyplot`. Excluding it crashes the frozen app on startup
+    # (ImportError) even though the app never draws landmarks itself.
     excludes=[
         'shapely',
         'pygame',
-        'matplotlib',
         'scipy',
         'jax',
         'jaxlib',
