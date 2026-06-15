@@ -2,15 +2,12 @@
 # PyInstaller spec file for StopNailBiting
 
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
 # Get the project root directory
 project_root = os.path.dirname(os.path.abspath(SPEC))
-
-# Collect Shapely's dynamic libraries (geos_c.dll, etc.)
-shapely_binaries = collect_dynamic_libs('shapely')
 
 # Collect MediaPipe data files (required for model loading)
 mediapipe_datas = collect_data_files('mediapipe')
@@ -18,7 +15,7 @@ mediapipe_datas = collect_data_files('mediapipe')
 a = Analysis(
     ['main.py'],
     pathex=[project_root],
-    binaries=shapely_binaries,
+    binaries=[],
     datas=[
         # Bundle the MediaPipe model files
         ('models/hand_landmarker.task', 'models'),
@@ -32,9 +29,7 @@ a = Analysis(
         'mediapipe.python',
         'mediapipe.python.solutions',
         'cv2',
-        'shapely',
-        'shapely.geometry',
-        'pygame',
+        'miniaudio',
         'numpy',
         'screeninfo',
         # WinRT for media control
@@ -52,7 +47,18 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Exclude removed/unused heavy packages so PyInstaller never bundles them
+    # even if they linger in the build venv. shapely (GEOS) and pygame (SDL)
+    # were replaced; the rest are common transitive bloat the app never imports.
+    excludes=[
+        'shapely',
+        'pygame',
+        'matplotlib',
+        'scipy',
+        'jax',
+        'jaxlib',
+        'pandas',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
