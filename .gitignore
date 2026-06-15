@@ -54,3 +54,7 @@ AGENTS.md
 demo_preview.py
 
 venv-win/
+
+# Assets (local test images, not the tracked noise.wav)
+assets/*.jpg
+assets/*.png
