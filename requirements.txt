@@ -1,8 +1,7 @@
 mediapipe
-opencv-python
-shapely
-pygame
+opencv-python-headless
 numpy
+miniaudio
 pyinstaller
 pystray
 Pillow
