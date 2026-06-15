@@ -1,4 +1,14 @@
 mediapipe
+# NOTE: mediapipe depends on opencv-contrib-python, so `pip install -r
+# requirements.txt` pulls contrib in *alongside* headless. Both own
+# site-packages/cv2/, and contrib (installed last, full GUI build) overwrites
+# headless on disk — re-bloating the PyInstaller exe and undoing the trim.
+# After installing, force headless to be the active cv2:
+#   pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless
+#   pip install --no-deps opencv-python-headless
+# Verify with: python -c "import cv2; print(cv2.getBuildInformation())"  -> GUI: NONE
+# (pip check will then warn that mediapipe wants opencv-contrib-python; that's
+# cosmetic — the app makes no cv2 GUI calls and mediapipe imports fine.)
 opencv-python-headless
 numpy
 miniaudio
